@@ -1456,7 +1456,43 @@ impl AdminContract {
 
     // Helper functions
 
-    /// Get the role of an address (panics if not admin).
+    /// Get the stored role of an address.
+    ///
+    /// # Determinism
+    /// The result is a pure function of the persisted `AdminInfo` record for
+    /// `address` at the current ledger. This entrypoint performs no mutation,
+    /// never advances [`DataKey::ConfigEpoch`], and emits no event, so it is
+    /// safe to call from read-only paths and from within other entrypoints.
+    /// Repeated reads are idempotent and observably identical.
+    ///
+    /// # Boundary behaviour
+    /// * A known admin — active, suspended, or deactivated — resolves to
+    ///   their stored role. Suspension and the `active` flag remove
+    ///   *effective authority*, not the stored role; callers that need
+    ///   "may this address act right now?" semantics must use
+    ///   [`AdminContract::is_admin`] or [`AdminContract::has_role_at_least`].
+    /// * An unknown / never-registered address fails with
+    ///   [`ContractError::NotAdmin`].
+    /// * An address removed by [`AdminContract::remove_admin`] fails with
+    ///   [`ContractError::NotAdmin`] — no stale value survives removal.
+    /// * The zero/invalid sentinel address fails with
+    ///   [`ContractError::NotAdmin`] (it has no `AdminInfo` record).
+    /// * A call before [`AdminContract::initialize`] fails with
+    ///   [`ContractError::NotAdmin`]; a per-address read has no
+    ///   initialisation dependency, so it never yields a bare panic.
+    /// * A dangling `AdminList` entry — the list still names the address but
+    ///   its `AdminInfo` record is gone — fails with
+    ///   [`ContractError::NotAdmin`] rather than serving stale list data.
+    /// * The read stays available while the contract is paused.
+    ///
+    /// # Panics
+    /// * [`ContractError::NotAdmin`] (100) when `address` has no stored
+    ///   `AdminInfo` record. This is a typed, wire-stable contract error —
+    ///   never a bare `panic!` — and it echoes no storage contents beyond
+    ///   the caller's own argument.
+    ///
+    /// Covered by the focused failure-boundary tests in
+    /// `test_get_role_failure_boundaries.rs`.
     pub fn get_role(e: Env, address: Address) -> AdminRole {
         bump_instance_ttl(&e);
         let admin_info: AdminInfo = e
@@ -1678,3 +1714,6 @@ mod test_concurrency_race_safety;
 
 #[cfg(test)]
 mod test_atomic_rollback;
+
+#[cfg(test)]
+mod test_get_role_failure_boundaries;
